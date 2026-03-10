@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="it">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Options Strategy Visualizer</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600&family=Outfit:wght@400;700&display=swap"
+        rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+
+<body>
+    <div class="glass-container">
+        <header>
+            <h1 id="appTitle">Options Strategy Visualizer</h1>
+            <div class="price-container">
+                <div class="asset-info">
+                    <span id="displayTicker" class="ticker-name">STOXX50</span>
+                    <button id="editAssetBtn" class="btn-icon">⚙️</button>
+                    <span id="displayExpiry" class="expiry-badge"
+                        style="margin-left: 10px; font-size: 0.8rem; opacity: 0.8;"></span>
+                </div>
+                <div class="price-display">
+                    <span id="livePrice" class="price-value">Caricamento...</span>
+                    <span id="priceChange" class="price-change">0.00 (0.00%)</span>
+                    <button id="refreshPriceBtn" class="btn-icon">🔄</button>
+                    <button id="shareBtn" class="btn-icon">🔗</button>
+                </div>
+            </div>
+            <p class="subtitle">Analisi Profit & Loss al Scadenza</p>
+        </header>
+
+        <main>
+            <section class="chart-section">
+                <canvas id="plChart"></canvas>
+            </section>
+
+            <section class="controls-section">
+                <div class="card pnl-summary">
+                    <div class="pnl-item">
+                        <span class="pnl-label">P&L Realizzato (Automatico):</span>
+                        <span id="realizedPL" class="pnl-value">0.00 €</span>
+                    </div>
+                    <div class="pnl-item">
+                        <span class="pnl-label">P&L Totale Baseline:</span>
+                        <span id="totalBaselinePL" class="pnl-value highlight">0.00 €</span>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <div
+                        style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem;">
+                        <h2>Registro Movimenti</h2>
+                        <div class="data-actions" style="margin-bottom: 0;">
+                            <button id="exportJsonBtn" class="btn-ghost">Esporta JSON</button>
+                            <button id="importJsonBtn" class="btn-ghost">Importa JSON</button>
+                            <input type="file" id="importInput" style="display: none;" accept=".json">
+                        </div>
+                    </div>
+                    <div class="table-container">
+                        <table id="movementsTable">
+                            <thead>
+                                <tr>
+                                    <th>Data</th>
+                                    <th>Tipo</th>
+                                    <th>Strike</th>
+                                    <th>Lato</th>
+                                    <th>Premio</th>
+                                    <th>Q.tà</th>
+                                    <th>P&L Rel.</th>
+                                    <th>Azioni</th>
+                                </tr>
+                            </thead>
+                            <tbody id="movementsBody">
+                                <!-- I movimenti verranno inseriti qui -->
+                            </tbody>
+                        </table>
+                    </div>
+                    <button id="addMovementBtn" class="btn-primary">Aggiungi Movimento</button>
+                </div>
+
+                <div class="card open-positions-card">
+                    <h2>Posizioni Aperte (Net)</h2>
+                    <div id="openPositionsList" class="open-positions-list">
+                        <!-- Le posizioni nette verranno inserite qui -->
+                    </div>
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <!-- Modal per impostazioni Asset -->
+    <div id="assetModal" class="modal">
+        <div class="modal-content glass-card">
+            <h3>Impostazioni Asset</h3>
+            <form id="assetForm">
+                <div class="form-group">
+                    <label>Ticker Yahoo Finance</label>
+                    <input type="text" id="tickerInput" value="^STOXX50E" required
+                        placeholder="es: ^GDAXI, SPY, BTC-USD">
+                    <small>Usa il simbolo esatto da Yahoo Finance</small>
+                </div>
+                <div class="form-group">
+                    <label>Moltiplicatore Opzioni</label>
+                    <input type="number" id="multiplierInput" value="10" required step="1">
+                    <small>STOXX50 = 10, DAX = 25, US = 100</small>
+                </div>
+                <div class="form-group">
+                    <label>Data Scadenza Opzione</label>
+                    <input type="date" id="expiryDate" required>
+                </div>
+                <div class="modal-actions">
+                    <button type="button" class="btn-secondary" id="closeAssetModal">Annulla</button>
+                    <button type="submit" class="btn-primary">Salva Asset</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Modal per aggiungere movimenti -->
+    <div id="movementModal" class="modal">
+        <div class="modal-content glass-card">
+            <h3>Nuovo Movimento</h3>
+            <form id="movementForm">
+                <div class="form-group">
+                    <label>Data</label>
+                    <input type="date" id="movementDate" required>
+                </div>
+                <div class="form-group">
+                    <label>Tipo</label>
+                    <select id="type" required>
+                        <option value="PUT">PUT</option>
+                        <option value="CALL">CALL</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>Strike</label>
+                    <input type="number" id="strike" required step="10" placeholder="es: 5600">
+                </div>
+                <div class="form-group">
+                    <label>Lato</label>
+                    <select id="side" required>
+                        <option value="SELL">VENDUTA (Short)</option>
+                        <option value="BUY">COMPRATA (Long)</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="premium">Premio</label>
+                    <input type="number" id="premium" required step="0.01" placeholder="es: 56.4">
+                </div>
+                <div class="form-group">
+                    <label for="quantity">Quantità</label>
+                    <input type="number" id="quantity" value="1" required>
+                </div>
+                <div class="modal-actions">
+                    <button type="button" class="btn-secondary" id="closeModal">Annulla</button>
+                    <button type="submit" class="btn-primary">Salva</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <script src="main.js"></script>
+</body>
+
+</html>
