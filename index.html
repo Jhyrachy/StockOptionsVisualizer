@@ -28,8 +28,11 @@
                     <span id="livePrice" class="price-value">Caricamento...</span>
                     <span id="priceChange" class="price-change">0.00 (0.00%)</span>
                     <span id="priceStatus" class="price-status"></span>
-                    <button id="refreshPriceBtn" class="btn-icon">🔄</button>
-                    <button id="shareBtn" class="btn-icon">🔗</button>
+                    <button id="refreshPriceBtn" class="btn-icon" title="Aggiorna Prezzo">🔄</button>
+                    <button id="exportJsonBtn" class="btn-icon" title="Esporta Dati">📄</button>
+                    <button id="importJsonBtn" class="btn-icon" title="Importa Dati">📥</button>
+                    <input type="file" id="importInput" style="display: none;" accept=".json">
+                    <button id="shareBtn" class="btn-icon" title="Condividi URL">🔗</button>
                 </div>
             </div>
             <p class="subtitle">Analisi Profit & Loss al Scadenza</p>
@@ -53,14 +56,8 @@
                 </div>
 
                 <div class="card">
-                    <div
-                        style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem;">
                         <h2>Registro Movimenti</h2>
-                        <div class="data-actions" style="margin-bottom: 0;">
-                            <button id="exportJsonBtn" class="btn-ghost">Esporta JSON</button>
-                            <button id="importJsonBtn" class="btn-ghost">Importa JSON</button>
-                            <input type="file" id="importInput" style="display: none;" accept=".json">
-                        </div>
                     </div>
                     <div class="table-container">
                         <table id="movementsTable">
