@@ -27,6 +27,7 @@
                 <div class="price-display">
                     <span id="livePrice" class="price-value">Caricamento...</span>
                     <span id="priceChange" class="price-change">0.00 (0.00%)</span>
+                    <span id="priceStatus" class="price-status"></span>
                     <button id="refreshPriceBtn" class="btn-icon">🔄</button>
                     <button id="shareBtn" class="btn-icon">🔗</button>
                 </div>
@@ -159,6 +160,27 @@
                 <div class="modal-actions">
                     <button type="button" class="btn-secondary" id="closeModal">Annulla</button>
                     <button type="submit" class="btn-primary">Salva</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Modal per inserimento prezzo manuale -->
+    <div id="manualPriceModal" class="modal">
+        <div class="modal-content glass-card">
+            <h3>Errore Rete: Inserisci Prezzo</h3>
+            <p style="margin-bottom: 1rem; font-size: 0.9rem; color: var(--text-secondary);">
+                Impossibile recuperare il prezzo in automatico. Puoi inserirlo manualmente controllando su 
+                <a id="yahooLink" href="#" target="_blank" style="color: #58a6ff; text-decoration: underline;">Yahoo Finance</a>.
+            </p>
+            <form id="manualPriceForm">
+                <div class="form-group">
+                    <label>Prezzo Attuale</label>
+                    <input type="number" id="manualPriceInput" required step="0.01" placeholder="es: 5800.50">
+                </div>
+                <div class="modal-actions">
+                    <button type="button" class="btn-secondary" id="closeManualPriceModal">Annulla</button>
+                    <button type="submit" class="btn-primary">Applica Prezzo</button>
                 </div>
             </form>
         </div>

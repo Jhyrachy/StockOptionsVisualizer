@@ -14,8 +14,11 @@ let movements = JSON.parse(localStorage.getItem('options_movements')) || [];
 
 // Runtime state
 let currentPrice = 0;
+let breakEvens = [];
 let openPositions = [];
 let totalRealizedPL = 0;
+let totalPremiumBalance = 0;
+let editingMovementId = null;
 
 // DOM Elements
 const movementsBody = document.getElementById('movementsBody');
@@ -42,6 +45,10 @@ const openPositionsList = document.getElementById('openPositionsList');
 const exportJsonBtn = document.getElementById('exportJsonBtn');
 const importJsonBtn = document.getElementById('importJsonBtn');
 const importInput = document.getElementById('importInput');
+
+const manualPriceModal = document.getElementById('manualPriceModal');
+const manualPriceForm = document.getElementById('manualPriceForm');
+const closeManualPriceModal = document.getElementById('closeManualPriceModal');
 
 // Initialization
 document.addEventListener('DOMContentLoaded', () => {
@@ -94,6 +101,7 @@ let realizedPnLMap = {};
 
 function processLedger() {
     totalRealizedPL = 0;
+    totalPremiumBalance = 0;
     realizedPnLMap = {};
     const inventory = {};
 
@@ -101,6 +109,9 @@ function processLedger() {
     movements.sort((a, b) => new Date(a.date) - new Date(b.date));
 
     movements.forEach(m => {
+        const flowMultiplier = m.side === 'SELL' ? 1 : -1;
+        totalPremiumBalance += m.premium * m.quantity * settings.multiplier * flowMultiplier;
+
         const key = `${m.type}-${m.strike}`;
         if (!inventory[key]) inventory[key] = [];
 
@@ -155,16 +166,86 @@ function processLedger() {
     }
 }
 
+const CACHE_DURATION_MS = 5 * 60 * 1000; // 5 minutes
+
+function getCachedPrice(ticker) {
+    const cached = JSON.parse(localStorage.getItem(`price_cache_${ticker}`));
+    if (cached && (Date.now() - cached.timestamp < CACHE_DURATION_MS)) {
+        return cached;
+    }
+    return null;
+}
+
+function setCachedPrice(ticker, data) {
+    localStorage.setItem(`price_cache_${ticker}`, JSON.stringify({
+        ...data,
+        timestamp: Date.now()
+    }));
+}
+
+async function fetchPriceWithFallbacks(targetUrl) {
+    const proxies = [
+        `https://api.allorigins.win/get?url=${encodeURIComponent(targetUrl)}`,
+        `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(targetUrl)}`
+    ];
+
+    for (const proxyUrl of proxies) {
+        try {
+            const response = await fetch(proxyUrl);
+            if (!response.ok) continue;
+            
+            let data;
+            const contentType = response.headers.get("content-type");
+            if (contentType && contentType.includes("application/json")) {
+                data = await response.json();
+                if (data.contents) data = JSON.parse(data.contents); // allorigins format
+            } else {
+                const text = await response.text();
+                data = JSON.parse(text);
+            }
+            
+            if (data && data.chart && data.chart.result && data.chart.result.length > 0) {
+                return data.chart.result[0];
+            }
+        } catch (e) {
+            console.warn(`Proxy failed: ${proxyUrl}`, e);
+        }
+    }
+    throw new Error('All proxies failed');
+}
+
 async function fetchLivePrice() {
     if (!refreshPriceBtn) return;
     refreshPriceBtn.classList.add('spinning');
-    try {
-        const proxyUrl = 'https://api.allorigins.win/get?url=';
-        const targetUrl = encodeURIComponent(`https://query1.finance.yahoo.com/v8/finance/chart/${settings.ticker}`);
+    
+    const priceStatusEl = document.getElementById('priceStatus');
+    if (priceStatusEl) {
+        priceStatusEl.style.display = 'none';
+        priceStatusEl.style.color = 'var(--text-secondary)';
+    }
 
-        const response = await fetch(proxyUrl + targetUrl);
-        const data = await response.json();
-        const result = JSON.parse(data.contents).chart.result[0];
+    try {
+        const targetUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${settings.ticker}`;
+        let result;
+        
+        const cached = getCachedPrice(settings.ticker);
+        if (cached) {
+            result = cached;
+            if (priceStatusEl) {
+                if (cached.isManual) {
+                    priceStatusEl.innerText = 'Manuale';
+                    priceStatusEl.style.display = 'inline-flex';
+                    priceStatusEl.style.color = 'var(--text-secondary)';
+                } else {
+                    priceStatusEl.innerText = 'Cached';
+                    priceStatusEl.style.display = 'inline-flex';
+                    priceStatusEl.style.color = '';
+                }
+            }
+        } else {
+            result = await fetchPriceWithFallbacks(targetUrl);
+            setCachedPrice(settings.ticker, result);
+        }
 
         currentPrice = result.meta.regularMarketPrice;
         const prevClose = result.meta.previousClose;
@@ -179,6 +260,22 @@ async function fetchLivePrice() {
     } catch (error) {
         console.error('Fetch error:', error);
         livePriceEl.innerText = 'N/D';
+        if (priceStatusEl) {
+            priceStatusEl.innerText = 'Errore Rete';
+            priceStatusEl.style.display = 'inline-flex';
+            priceStatusEl.style.color = 'var(--danger-color)';
+        }
+        
+        // Show manual price modal
+        const yahooLink = document.getElementById('yahooLink');
+        if (yahooLink) {
+            yahooLink.href = `https://finance.yahoo.com/quote/${encodeURIComponent(settings.ticker)}`;
+        }
+        if (currentPrice > 0) {
+            document.getElementById('manualPriceInput').value = currentPrice;
+        }
+        manualPriceModal.style.display = 'flex';
+
     } finally {
         refreshPriceBtn.classList.remove('spinning');
     }
@@ -189,7 +286,7 @@ function updateUI() {
     renderOpenPositions();
     updateExpiryDisplay();
 
-    realizedPLEl.innerText = `${totalRealizedPL.toFixed(2)} €`;
+    realizedPLEl.innerText = `${totalPremiumBalance.toFixed(2)} €`;
     const totalBaseline = totalRealizedPL;
     totalBaselinePLEl.innerText = `${totalBaseline.toFixed(2)} €`;
 
@@ -199,19 +296,31 @@ function updateUI() {
 function renderMovements() {
     movementsBody.innerHTML = '';
     movements.forEach(m => {
-        const pnl = realizedPnLMap[m.id] || 0;
+        const flowMultiplier = m.side === 'SELL' ? 1 : -1;
+        const movementValue = m.premium * m.quantity * settings.multiplier * flowMultiplier;
+
         const row = document.createElement('tr');
         row.innerHTML = `
             <td>${m.date}</td>
-            <td>${m.type} ${m.strike}</td>
+            <td>${m.type}</td>
+            <td>${m.strike}</td>
             <td class="${m.side === 'BUY' ? 'side-buy' : 'side-sell'}">${m.side === 'BUY' ? 'BUY' : 'SELL'}</td>
             <td>${m.premium}</td>
             <td>${m.quantity}</td>
-            <td class="${pnl > 0 ? 'pnl-positive' : (pnl < 0 ? 'pnl-negative' : '')}">
-                ${pnl !== 0 ? pnl.toFixed(2) + ' €' : '-'}
+            <td class="${movementValue > 0 ? 'pnl-positive' : (movementValue < 0 ? 'pnl-negative' : '')}">
+                ${movementValue.toFixed(2)} €
             </td>
-            <td><button class="btn-delete" onclick="deleteMovement(${m.id})">Elimina</button></td>
+            <td>
+                <div style="display: flex; gap: 0.5rem; justify-content: flex-end;">
+                    <button class="btn-ghost btn-sm edit-btn">Modifica</button>
+                    <button class="btn-delete btn-sm delete-btn">Elimina</button>
+                </div>
+            </td>
         `;
+        
+        row.querySelector('.edit-btn').addEventListener('click', () => window.editMovement(m.id));
+        row.querySelector('.delete-btn').addEventListener('click', () => window.deleteMovement(m.id));
+        
         movementsBody.appendChild(row);
     });
 }
@@ -237,14 +346,45 @@ function renderOpenPositions() {
 }
 
 window.deleteMovement = (id) => {
-    movements = movements.filter(m => m.id !== id);
+    const numId = Number(id);
+    movements = movements.filter(m => m.id !== numId);
+    
+    // If the user deletes the movement they are currently editing, reset the form.
+    if (editingMovementId === numId) {
+        editingMovementId = null;
+        movementForm.reset();
+        movementModal.style.display = 'none';
+    }
+    
     processLedger();
     saveData();
     updateUI();
 };
 
+window.editMovement = (id) => {
+    const numId = Number(id);
+    const m = movements.find(mov => mov.id === numId);
+    if (!m) return;
+
+    editingMovementId = numId;
+    document.getElementById('movementDate').value = m.date;
+    document.getElementById('type').value = m.type;
+    document.getElementById('strike').value = m.strike;
+    document.getElementById('side').value = m.side;
+    document.getElementById('premium').value = m.premium;
+    document.getElementById('quantity').value = m.quantity;
+
+    document.querySelector('#movementModal h3').innerText = 'Modifica Movimento';
+    document.querySelector('#movementForm .btn-primary').innerText = 'Aggiorna';
+    movementModal.style.display = 'flex';
+};
+
 // UI Handlers
 addMovementBtn.onclick = () => {
+    editingMovementId = null;
+    movementForm.reset();
+    document.querySelector('#movementModal h3').innerText = 'Nuovo Movimento';
+    document.querySelector('#movementForm .btn-primary').innerText = 'Salva';
     document.getElementById('movementDate').value = new Date().toISOString().split('T')[0];
     movementModal.style.display = 'flex';
 };
@@ -320,8 +460,7 @@ importInput.onchange = (e) => {
 
 movementForm.onsubmit = (e) => {
     e.preventDefault();
-    const newMovement = {
-        id: Date.now(),
+    const data = {
         date: document.getElementById('movementDate').value,
         type: document.getElementById('type').value,
         strike: parseFloat(document.getElementById('strike').value),
@@ -329,13 +468,63 @@ movementForm.onsubmit = (e) => {
         premium: parseFloat(document.getElementById('premium').value),
         quantity: parseInt(document.getElementById('quantity').value)
     };
-    movements.push(newMovement);
+
+    if (editingMovementId) {
+        const index = movements.findIndex(m => m.id === editingMovementId);
+        if (index !== -1) {
+            movements[index] = { ...movements[index], ...data };
+        }
+    } else {
+        movements.push({
+            id: Date.now(),
+            ...data
+        });
+    }
+
     movementModal.style.display = 'none';
     movementForm.reset();
     processLedger();
     saveData();
     updateUI();
 };
+
+if (manualPriceForm) {
+    manualPriceForm.onsubmit = (e) => {
+        e.preventDefault();
+        const newPrice = parseFloat(document.getElementById('manualPriceInput').value);
+        if (!isNaN(newPrice)) {
+            currentPrice = newPrice;
+            livePriceEl.innerText = currentPrice.toFixed(2);
+            
+            // Clear price change explicitly since we don't have previous close
+            priceChangeEl.innerText = '';
+            
+            const priceStatusEl = document.getElementById('priceStatus');
+            if (priceStatusEl) {
+                priceStatusEl.innerText = 'Manuale';
+                priceStatusEl.style.display = 'inline-flex';
+                priceStatusEl.style.color = 'var(--text-secondary)';
+            }
+            
+            // Generate a mock result object to store in cache
+            const manualData = {
+                meta: {
+                    regularMarketPrice: newPrice,
+                    previousClose: newPrice // Prevent breaking change calculations
+                },
+                isManual: true
+            };
+            setCachedPrice(settings.ticker, manualData);
+            
+            manualPriceModal.style.display = 'none';
+            updateChart();
+        }
+    };
+}
+
+if (closeManualPriceModal) {
+    closeManualPriceModal.onclick = () => manualPriceModal.style.display = 'none';
+}
 
 assetForm.onsubmit = (e) => {
     e.preventDefault();
@@ -366,6 +555,78 @@ function calculatePnL(price, pos) {
     }
     return pnl * pos.quantity * settings.multiplier;
 }
+
+const breakEvenPlugin = {
+    id: 'breakEvenMarkers',
+    afterDraw: (chart) => {
+        const { ctx, scales: { x, y } } = chart;
+        ctx.save();
+        breakEvens.forEach(be => {
+            const xPos = x.getPixelForValue(be);
+            const yPos = y.getPixelForValue(0);
+            if (xPos >= chart.chartArea.left && xPos <= chart.chartArea.right) {
+                ctx.beginPath();
+                ctx.arc(xPos, yPos, 4, 0, 2 * Math.PI);
+                ctx.fillStyle = '#bc8cff';
+                ctx.fill();
+
+                ctx.font = '10px Inter';
+                ctx.textAlign = 'center';
+                ctx.fillText(be.toFixed(0), xPos, yPos - 10);
+            }
+        });
+        ctx.restore();
+    }
+};
+
+const currentPricePlugin = {
+    id: 'currentPriceLine',
+    afterDraw: (chart) => {
+        if (currentPrice > 0) {
+            const { ctx, chartArea: { top, bottom, left, right }, scales: { x } } = chart;
+            const xPos = x.getPixelForValue(currentPrice);
+            if (xPos >= left && xPos <= right) {
+                ctx.save();
+
+                // Draw vertical line (Bright Cyan for maximum visibility)
+                ctx.beginPath();
+                ctx.setLineDash([]);
+                ctx.lineWidth = 2.5;
+                ctx.strokeStyle = '#00ffff'; 
+                ctx.moveTo(xPos, top);
+                ctx.lineTo(xPos, bottom);
+                ctx.stroke();
+
+                // Draw price bubble inside the chart area
+                const label = `PREZZO: ${currentPrice.toFixed(2)}`;
+                ctx.font = 'bold 11px Inter';
+                const textWidth = ctx.measureText(label).width;
+                const padding = 6;
+                const bubbleWidth = textWidth + padding * 2;
+                const bubbleHeight = 22;
+
+                let bubbleX = xPos - bubbleWidth / 2;
+                if (bubbleX < left) bubbleX = left;
+                if (bubbleX + bubbleWidth > right) bubbleX = right - bubbleWidth;
+
+                // Place the bubble slightly below the top to avoid cutoff
+                const bubbleY = top + 5;
+
+                ctx.fillStyle = '#00ffff';
+                ctx.beginPath();
+                ctx.rect(bubbleX, bubbleY, bubbleWidth, bubbleHeight);
+                ctx.fill();
+
+                ctx.fillStyle = '#0d1117'; // Dark text for contrast
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText(label, bubbleX + bubbleWidth / 2, bubbleY + bubbleHeight / 2);
+
+                ctx.restore();
+            }
+        }
+    }
+};
 
 function initChart() {
     const ctx = document.getElementById('plChart').getContext('2d');
@@ -417,9 +678,11 @@ function initChart() {
                     }
                 }
             }
-        }
+        },
+        plugins: [currentPricePlugin, breakEvenPlugin]
     });
 }
+
 
 function updateChart() {
     if (!myChart) return;
@@ -439,7 +702,7 @@ function updateChart() {
 
     const dataPoints = [];
     const step = (maxS - minS) / 200; // More precision
-    const breakEvens = [];
+    breakEvens.length = 0; // Clear global array
 
     let prevY = null;
     let prevX = null;
@@ -462,51 +725,5 @@ function updateChart() {
     }
 
     myChart.data.datasets[0].data = dataPoints;
-
-    const breakEvenPlugin = {
-        id: 'breakEvenMarkers',
-        afterDraw: (chart) => {
-            const { ctx, scales: { x, y } } = chart;
-            ctx.save();
-            breakEvens.forEach(be => {
-                const xPos = x.getPixelForValue(be);
-                const yPos = y.getPixelForValue(0);
-                if (xPos >= chart.chartArea.left && xPos <= chart.chartArea.right) {
-                    ctx.beginPath();
-                    ctx.arc(xPos, yPos, 4, 0, 2 * Math.PI);
-                    ctx.fillStyle = '#bc8cff';
-                    ctx.fill();
-
-                    ctx.font = '10px Inter';
-                    ctx.textAlign = 'center';
-                    ctx.fillText(be.toFixed(0), xPos, yPos - 10);
-                }
-            });
-            ctx.restore();
-        }
-    };
-
-    const currentPricePlugin = {
-        id: 'currentPriceLine',
-        afterDraw: (chart) => {
-            if (currentPrice > 0) {
-                const { ctx, chartArea: { top, bottom }, scales: { x } } = chart;
-                const xPos = x.getPixelForValue(currentPrice);
-                if (xPos >= chart.chartArea.left && xPos <= chart.chartArea.right) {
-                    ctx.save();
-                    ctx.beginPath();
-                    ctx.setLineDash([5, 5]);
-                    ctx.lineWidth = 1.5;
-                    ctx.strokeStyle = '#58a6ff';
-                    ctx.moveTo(xPos, top);
-                    ctx.lineTo(xPos, bottom);
-                    ctx.stroke();
-                    ctx.restore();
-                }
-            }
-        }
-    };
-
-    myChart.config.plugins = [currentPricePlugin, breakEvenPlugin];
-    myChart.update();
+    myChart.update('none'); // Update without animation for smoother resizing
 }
