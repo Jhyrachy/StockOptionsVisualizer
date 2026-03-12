@@ -597,31 +597,6 @@ const currentPricePlugin = {
                 ctx.lineTo(xPos, bottom);
                 ctx.stroke();
 
-                // Draw price bubble inside the chart area
-                const label = `PREZZO: ${currentPrice.toFixed(2)}`;
-                ctx.font = 'bold 11px Inter';
-                const textWidth = ctx.measureText(label).width;
-                const padding = 6;
-                const bubbleWidth = textWidth + padding * 2;
-                const bubbleHeight = 22;
-
-                let bubbleX = xPos - bubbleWidth / 2;
-                if (bubbleX < left) bubbleX = left;
-                if (bubbleX + bubbleWidth > right) bubbleX = right - bubbleWidth;
-
-                // Place the bubble slightly below the top to avoid cutoff
-                const bubbleY = top + 5;
-
-                ctx.fillStyle = '#00ffff';
-                ctx.beginPath();
-                ctx.rect(bubbleX, bubbleY, bubbleWidth, bubbleHeight);
-                ctx.fill();
-
-                ctx.fillStyle = '#0d1117'; // Dark text for contrast
-                ctx.textAlign = 'center';
-                ctx.textBaseline = 'middle';
-                ctx.fillText(label, bubbleX + bubbleWidth / 2, bubbleY + bubbleHeight / 2);
-
                 ctx.restore();
             }
         }
